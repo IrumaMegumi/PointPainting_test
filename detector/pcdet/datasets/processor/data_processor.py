@@ -45,13 +45,14 @@ class DataProcessor(object):
             try:
                 from spconv.utils import VoxelGeneratorV2 as VoxelGenerator
             except:
-                from spconv.utils import VoxelGenerator
+                from spconv.utils import Point2VoxelCPU3d as VoxelGenerator
 
             voxel_generator = VoxelGenerator(
-                voxel_size=config.VOXEL_SIZE,
-                point_cloud_range=self.point_cloud_range,
-                max_num_points=config.MAX_POINTS_PER_VOXEL,
-                max_voxels=config.MAX_NUMBER_OF_VOXELS[self.mode]
+                vsize_xyz=config.VOXEL_SIZE,
+                coors_range_xyz=self.point_cloud_range,
+                num_point_features=8,
+                max_num_points_per_voxel=config.MAX_POINTS_PER_VOXEL,
+                max_num_voxels=config.MAX_NUMBER_OF_VOXELS[self.mode]
             )
             grid_size = (self.point_cloud_range[3:6] - self.point_cloud_range[0:3]) / np.array(config.VOXEL_SIZE)
             self.grid_size = np.round(grid_size).astype(np.int64)
@@ -62,7 +63,7 @@ class DataProcessor(object):
         voxel_output = voxel_generator.generate(points)
         if isinstance(voxel_output, dict):
             voxels, coordinates, num_points = \
-                voxel_output['voxels'], voxel_output['coordinates'], voxel_output['num_points_per_voxel']
+                voxel_output['voxels'], voxel_output['coordinates'], voxel_output['num_points']
         else:
             voxels, coordinates, num_points = voxel_output
 

@@ -15,12 +15,16 @@ class DataBaseSampler(object):
         self.db_infos = {}
         for class_name in class_names:
             self.db_infos[class_name] = []
-
         for db_info_path in sampler_cfg.DB_INFO_PATH:
             db_info_path = self.root_path.resolve() / db_info_path
             with open(str(db_info_path), 'rb') as f:
                 infos = pickle.load(f)
-                [self.db_infos[cur_class].extend(infos[cur_class]) for cur_class in class_names]
+                #[self.db_infos[cur_class].extend(infos[cur_class]) for cur_class in class_names]
+                for cur_class in class_names:
+                    if cur_class in infos:
+                        self.db_infos[cur_class].extend(infos[cur_class])
+                    else:
+                        pass
 
         for func_name, val in sampler_cfg.PREPARE.items():
             self.db_infos = getattr(self, func_name)(self.db_infos, val)
@@ -186,27 +190,30 @@ class DataBaseSampler(object):
         existed_boxes = gt_boxes
         total_valid_sampled_dict = []
         for class_name, sample_group in self.sample_groups.items():
-            if self.limit_whole_scene:
-                num_gt = np.sum(class_name == gt_names)
-                sample_group['sample_num'] = str(int(self.sample_class_num[class_name]) - num_gt)
-            if int(sample_group['sample_num']) > 0:
-                sampled_dict = self.sample_with_fixed_number(class_name, sample_group)
+            if sample_group['indices'].shape[0] == 0:
+                pass
+            else:
+                if self.limit_whole_scene:
+                    num_gt = np.sum(class_name == gt_names)
+                    sample_group['sample_num'] = str(int(self.sample_class_num[class_name]) - num_gt)
+                if int(sample_group['sample_num']) > 0:
+                    sampled_dict = self.sample_with_fixed_number(class_name, sample_group)
+                    
+                    sampled_boxes = np.stack([x['box3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
 
-                sampled_boxes = np.stack([x['box3d_lidar'] for x in sampled_dict], axis=0).astype(np.float32)
+                    if self.sampler_cfg.get('DATABASE_WITH_FAKELIDAR', False):
+                        sampled_boxes = box_utils.boxes3d_kitti_fakelidar_to_lidar(sampled_boxes)
 
-                if self.sampler_cfg.get('DATABASE_WITH_FAKELIDAR', False):
-                    sampled_boxes = box_utils.boxes3d_kitti_fakelidar_to_lidar(sampled_boxes)
+                    iou1 = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, 0:7], existed_boxes[:, 0:7])
+                    iou2 = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, 0:7], sampled_boxes[:, 0:7])
+                    iou2[range(sampled_boxes.shape[0]), range(sampled_boxes.shape[0])] = 0
+                    iou1 = iou1 if iou1.shape[1] > 0 else iou2
+                    valid_mask = ((iou1.max(axis=1) + iou2.max(axis=1)) == 0).nonzero()[0]
+                    valid_sampled_dict = [sampled_dict[x] for x in valid_mask]
+                    valid_sampled_boxes = sampled_boxes[valid_mask]
 
-                iou1 = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, 0:7], existed_boxes[:, 0:7])
-                iou2 = iou3d_nms_utils.boxes_bev_iou_cpu(sampled_boxes[:, 0:7], sampled_boxes[:, 0:7])
-                iou2[range(sampled_boxes.shape[0]), range(sampled_boxes.shape[0])] = 0
-                iou1 = iou1 if iou1.shape[1] > 0 else iou2
-                valid_mask = ((iou1.max(axis=1) + iou2.max(axis=1)) == 0).nonzero()[0]
-                valid_sampled_dict = [sampled_dict[x] for x in valid_mask]
-                valid_sampled_boxes = sampled_boxes[valid_mask]
-
-                existed_boxes = np.concatenate((existed_boxes, valid_sampled_boxes), axis=0)
-                total_valid_sampled_dict.extend(valid_sampled_dict)
+                    existed_boxes = np.concatenate((existed_boxes, valid_sampled_boxes), axis=0)
+                    total_valid_sampled_dict.extend(valid_sampled_dict)
 
         sampled_gt_boxes = existed_boxes[gt_boxes.shape[0]:, :]
         if total_valid_sampled_dict.__len__() > 0:

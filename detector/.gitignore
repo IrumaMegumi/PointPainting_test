@@ -1,6 +1,7 @@
 **__pycache__**
 **build**
 **egg-info**
+**output**
 **dist**
 *.pyc
 venv/

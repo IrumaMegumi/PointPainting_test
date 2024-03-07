@@ -6,3 +6,4 @@ painted_lidar
 /painting/mmseg/checkpoints
 **/.DS_Store
 **/__pycache__
+**/output

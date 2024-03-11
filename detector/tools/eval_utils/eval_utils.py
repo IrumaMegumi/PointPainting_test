@@ -120,6 +120,35 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     logger.info('****************Evaluation done.*****************')
     return ret_dict
 
+#用于在验证集中评价损失函数
+def eval_loss(model, test_loader, model_func,accumulated_iter,
+                    rank, tbar, tb_log=None, leave_pbar=False):
+    
+    model.eval()
+    if rank == 0:
+        pbar = tqdm.tqdm(total=len(test_loader), leave=True, desc='eval', dynamic_ncols=True)
+    with torch.no_grad():
+        for i, batch_dict in enumerate(test_loader):
+            eval_loss, tb_dict, disp_dict = model_func(model, batch_dict)
+        # log to console and tensorboard
+        disp_dict.update({'val_loss': eval_loss.item()})
+        if rank == 0:
+            pbar.update()
+            pbar.set_postfix(dict(total_it=accumulated_iter))
+            tbar.set_postfix(disp_dict)
+            tbar.refresh()
+            if tb_log is not None:
+                tb_log.add_scalar('eval/loss', eval_loss, accumulated_iter)
+                for key, val in tb_dict.items():
+                    tb_log.add_scalar('val/' + key, val, accumulated_iter)
+    if rank == 0:
+        pbar.close()
+    return eval_loss
+
+#用于在验证集中评价mAP
+def eval_mAP():
+    pass
+
 
 if __name__ == '__main__':
     pass

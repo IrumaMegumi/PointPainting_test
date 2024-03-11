@@ -24,6 +24,7 @@ class Painter:
     def __init__(self, seg_net_index):
         self.root_split_path = TRAINING_PATH
         self.save_path = TRAINING_PATH + "painted_lidar/"
+        print(os.getcwd())
         if not os.path.exists(self.save_path):
             os.mkdir(self.save_path)
 
@@ -70,7 +71,6 @@ class Painter:
 
             with torch.no_grad():
                 output = self.model(input_batch)['out'][0]
-
             output_permute = output.permute(1,2,0)
             output_probability,output_predictions =  output_permute.max(2)
 
@@ -164,7 +164,7 @@ class Painter:
         
         return lidar_cam_coords
 
-    def augment_lidar_class_scores_both(self, class_scores_r, class_scores_l, lidar_raw, projection_mats):
+    def augment_lidar_class_scores_both(self,lidar_raw, projection_mats,class_scores_l,class_scores_r=None):
         """
         Projects lidar points onto segmentation map, appends class score each point projects onto.
         """
@@ -172,21 +172,21 @@ class Painter:
         # TODO: Project lidar points onto left and right segmentation maps. How to use projection_mats? 
         ################################
         lidar_cam_coords = self.cam_to_lidar(lidar_raw, projection_mats)
+        if class_scores_r is not None:
+            # right
+            lidar_cam_coords[:, -1] = 1 #homogenous coords for projection
+            # TODO: change projection_mats['P2'] and projection_mats['R0_rect'] to be?
+            points_projected_on_mask_r = projection_mats['P3'].dot(projection_mats['R0_rect'].dot(lidar_cam_coords.transpose()))
+            points_projected_on_mask_r = points_projected_on_mask_r.transpose()
+            points_projected_on_mask_r = points_projected_on_mask_r/(points_projected_on_mask_r[:,2].reshape(-1,1))
 
-        # right
-        lidar_cam_coords[:, -1] = 1 #homogenous coords for projection
-        # TODO: change projection_mats['P2'] and projection_mats['R0_rect'] to be?
-        points_projected_on_mask_r = projection_mats['P3'].dot(projection_mats['R0_rect'].dot(lidar_cam_coords.transpose()))
-        points_projected_on_mask_r = points_projected_on_mask_r.transpose()
-        points_projected_on_mask_r = points_projected_on_mask_r/(points_projected_on_mask_r[:,2].reshape(-1,1))
+            true_where_x_on_img_r = (0 < points_projected_on_mask_r[:, 0]) & (points_projected_on_mask_r[:, 0] < class_scores_r.shape[1]) #x in img coords is cols of img
+            true_where_y_on_img_r = (0 < points_projected_on_mask_r[:, 1]) & (points_projected_on_mask_r[:, 1] < class_scores_r.shape[0])
+            true_where_point_on_img_r = true_where_x_on_img_r & true_where_y_on_img_r
 
-        true_where_x_on_img_r = (0 < points_projected_on_mask_r[:, 0]) & (points_projected_on_mask_r[:, 0] < class_scores_r.shape[1]) #x in img coords is cols of img
-        true_where_y_on_img_r = (0 < points_projected_on_mask_r[:, 1]) & (points_projected_on_mask_r[:, 1] < class_scores_r.shape[0])
-        true_where_point_on_img_r = true_where_x_on_img_r & true_where_y_on_img_r
-
-        points_projected_on_mask_r = points_projected_on_mask_r[true_where_point_on_img_r] # filter out points that don't project to image
-        points_projected_on_mask_r = np.floor(points_projected_on_mask_r).astype(int) # using floor so you don't end up indexing num_rows+1th row or col
-        points_projected_on_mask_r = points_projected_on_mask_r[:, :2] #drops homogenous coord 1 from every point, giving (N_pts, 2) int array
+            points_projected_on_mask_r = points_projected_on_mask_r[true_where_point_on_img_r] # filter out points that don't project to image
+            points_projected_on_mask_r = np.floor(points_projected_on_mask_r).astype(int) # using floor so you don't end up indexing num_rows+1th row or col
+            points_projected_on_mask_r = points_projected_on_mask_r[:, :2] #drops homogenous coord 1 from every point, giving (N_pts, 2) int array
 
         # left
         lidar_cam_coords[:, -1] = 1 #homogenous coords for projection
@@ -203,25 +203,37 @@ class Painter:
         points_projected_on_mask_l = np.floor(points_projected_on_mask_l).astype(int) # using floor so you don't end up indexing num_rows+1th row or col
         points_projected_on_mask_l = points_projected_on_mask_l[:, :2] #drops homogenous coord 1 from every point, giving (N_pts, 2) int array
 
-        true_where_point_on_both_img = true_where_point_on_img_l & true_where_point_on_img_r
-        true_where_point_on_img = true_where_point_on_img_l | true_where_point_on_img_r
-
+        if class_scores_r is not None:
+            true_where_point_on_both_img = true_where_point_on_img_l & true_where_point_on_img_r
+            true_where_point_on_img = true_where_point_on_img_l | true_where_point_on_img_r
+        else:
+            true_where_point_on_both_img = true_where_point_on_img_l 
+            true_where_point_on_img = true_where_point_on_img_l
+        
         #indexing oreder below is 1 then 0 because points_projected_on_mask is x,y in image coords which is cols, rows while class_score shape is (rows, cols)
         #socre dimesion: point_scores.shape[2] TODO!!!!
-        point_scores_r = class_scores_r[points_projected_on_mask_r[:, 1], points_projected_on_mask_r[:, 0]].reshape(-1, class_scores_r.shape[2])
+        if class_scores_r is not None:
+            point_scores_r = class_scores_r[points_projected_on_mask_r[:, 1], points_projected_on_mask_r[:, 0]].reshape(-1, class_scores_r.shape[2])
+        
         point_scores_l = class_scores_l[points_projected_on_mask_l[:, 1], points_projected_on_mask_l[:, 0]].reshape(-1, class_scores_l.shape[2])
         #augmented_lidar = np.concatenate((lidar_raw[true_where_point_on_img], point_scores), axis=1)
-        augmented_lidar = np.concatenate((lidar_raw, np.zeros((lidar_raw.shape[0], class_scores_r.shape[2]))), axis=1)
-        augmented_lidar[true_where_point_on_img_r, -class_scores_r.shape[2]:] += point_scores_r
+        if class_scores_r is not None:
+            augmented_lidar = np.concatenate((lidar_raw, np.zeros((lidar_raw.shape[0], class_scores_r.shape[2]))), axis=1)
+            augmented_lidar[true_where_point_on_img_r, -class_scores_r.shape[2]:] += point_scores_r
+        else:
+            augmented_lidar = np.concatenate((lidar_raw, np.zeros((lidar_raw.shape[0], class_scores_l.shape[2]))), axis=1)
+
         augmented_lidar[true_where_point_on_img_l, -class_scores_l.shape[2]:] += point_scores_l
-        augmented_lidar[true_where_point_on_both_img, -class_scores_r.shape[2]:] = 0.5 * augmented_lidar[true_where_point_on_both_img, -class_scores_r.shape[2]:]
+
+        #augmented_lidar[true_where_point_on_both_img, -class_scores_r.shape[2]:] = 0.5 * augmented_lidar[true_where_point_on_both_img, -class_scores_r.shape[2]:]
+        
         augmented_lidar = augmented_lidar[true_where_point_on_img]
         augmented_lidar = self.create_cyclist(augmented_lidar)
 
         return augmented_lidar
 
     def run(self):
-        num_image = 7481
+        num_image = 1
         for idx in tqdm(range(num_image)):
             sample_idx = "%06d" % idx
             # points: N * 4(x, y, z, r)
@@ -229,7 +241,8 @@ class Painter:
             
             # get segmentation score from network
             scores_from_cam = self.get_score(sample_idx, "image_2/")
-            scores_from_cam_r = self.get_score(sample_idx, "image_3/")
+            # no cam_r files
+            #scores_from_cam_r = self.get_score(sample_idx, "image_3/")
             # scores_from_cam: H * W * 4/5, each pixel have 4/5 scores(0: background, 1: bicycle, 2: car, 3: person, 4: rider)
 
             # get calibration data
@@ -237,8 +250,7 @@ class Painter:
             
             # paint the point clouds
             # points: N * 8
-            points = self.augment_lidar_class_scores_both(scores_from_cam_r, scores_from_cam, points, calib_fromfile)
-            
+            points = self.augment_lidar_class_scores_both(points, calib_fromfile,scores_from_cam)
             np.save(self.save_path + ("%06d.npy" % idx), points)
 
 if __name__ == '__main__':

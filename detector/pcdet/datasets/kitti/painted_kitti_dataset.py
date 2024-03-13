@@ -432,7 +432,6 @@ def create_kitti_infos(dataset_cfg, class_names, data_path, save_path, workers=8
 
     print('---------------Data preparation Done---------------')
 
-
 if __name__ == '__main__':
     import sys
     if sys.argv.__len__() > 1 and sys.argv[1] == 'create_kitti_infos':

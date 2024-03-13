@@ -91,7 +91,9 @@ def inference_segmentor(model, img):
         data = scatter(data, [device])[0]
     else:
         data['img_metas'] = [i.data[0] for i in data['img_metas']]
-
+    model.eval()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     # forward the model
     with torch.no_grad():
         result = model(return_loss=False, rescale=True, **data)

@@ -390,7 +390,7 @@ def create_kitti_infos(dataset_cfg, class_names, data_path, save_path, workers=4
     train_filename = save_path / ('kitti_infos_%s.pkl' % train_split)
     val_filename = save_path / ('kitti_infos_%s.pkl' % val_split)
     trainval_filename = save_path / 'kitti_infos_trainval.pkl'
-    test_filename = save_path / 'kitti_infos_test.pkl'
+    #test_filename = save_path / 'kitti_infos_test.pkl'
 
     print('---------------Start to generate data infos---------------')
 
@@ -410,11 +410,13 @@ def create_kitti_infos(dataset_cfg, class_names, data_path, save_path, workers=4
         pickle.dump(kitti_infos_train + kitti_infos_val, f)
     print('Kitti info trainval file is saved to %s' % trainval_filename)
 
+    '''
     dataset.set_split('test')
     kitti_infos_test = dataset.get_infos(num_workers=workers, has_label=False, count_inside_pts=False)
     with open(test_filename, 'wb') as f:
         pickle.dump(kitti_infos_test, f)
     print('Kitti info test file is saved to %s' % test_filename)
+    '''
 
     print('---------------Start create groundtruth database for data augmentation---------------')
     dataset.set_split(train_split)
@@ -431,6 +433,7 @@ if __name__ == '__main__':
         from easydict import EasyDict
         dataset_cfg = EasyDict(yaml.load(open(sys.argv[2]),Loader=yaml.CLoader))
         ROOT_DIR = (Path(__file__).resolve().parent / '../../../').resolve()
+        print(ROOT_DIR)
         create_kitti_infos(
             dataset_cfg=dataset_cfg,
             class_names=['Car', 'Pedestrian', 'Cyclist'],

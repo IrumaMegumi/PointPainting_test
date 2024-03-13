@@ -120,30 +120,47 @@ def eval_one_epoch(cfg, model, dataloader, epoch_id, logger, dist_test=False, sa
     logger.info('****************Evaluation done.*****************')
     return ret_dict
 
-#用于在验证集中评价损失函数
-def eval_loss(model, test_loader, model_func,accumulated_iter,
-                    rank, tbar, tb_log=None, leave_pbar=False):
-    
+#用于在验证集中评价损失函数，不过似乎不给用，这个暂时废弃
+def eval_loss(model, test_loader, model_func,total_it_each_epoch_val,accumulated_iter,
+                    rank,cur_epoch,tb_log=None):
+    if total_it_each_epoch_val==len(test_loader):
+        dataloader_iter=iter(test_loader)
+
     model.eval()
+    eval_loss_cur_epoch=0
+    total_batch=0
+    tb_dict_val={'rpn_loss':0,'rpn_loss_cls':0,'rpn_loss_loc':0,'rpn_loss_dir':0}
     if rank == 0:
-        pbar = tqdm.tqdm(total=len(test_loader), leave=True, desc='eval', dynamic_ncols=True)
-    with torch.no_grad():
-        for i, batch_dict in enumerate(test_loader):
-            eval_loss, tb_dict, disp_dict = model_func(model, batch_dict)
-        # log to console and tensorboard
+        pbar = tqdm.tqdm(total=total_it_each_epoch_val, leave=False, desc='val', dynamic_ncols=True)
+
+    for cur_it in range(total_it_each_epoch_val):
+        try:
+            batch = next(dataloader_iter)
+        except StopIteration:
+            dataloader_iter = iter(test_loader)
+            batch = next(dataloader_iter)
+            print('new iters')
+        model.eval()
+        with torch.no_grad():
+            eval_loss, tb_dict, disp_dict = model_func(model, batch)
         disp_dict.update({'val_loss': eval_loss.item()})
+        eval_loss_cur_epoch+=eval_loss
+        # log to console and tensorboard
         if rank == 0:
             pbar.update()
-            pbar.set_postfix(dict(total_it=accumulated_iter))
-            tbar.set_postfix(disp_dict)
-            tbar.refresh()
+            #pbar.set_postfix(dict(total_it=accumulated_iter))
             if tb_log is not None:
-                tb_log.add_scalar('eval/loss', eval_loss, accumulated_iter)
+                #tb_log.add_scalar('train/loss', train_loss, accumulated_iter)
                 for key, val in tb_dict.items():
-                    tb_log.add_scalar('val/' + key, val, accumulated_iter)
+                    if key in tb_dict_val.keys():
+                        #tb_log.add_scalar('train/' + key, val, accumulated_iter)
+                        tb_dict_val[key]+=val
     if rank == 0:
         pbar.close()
-    return eval_loss
+    eval_loss_cur_epoch=eval_loss_cur_epoch/total_it_each_epoch_val
+    for key,val in tb_dict_val.items():
+        tb_dict_val[key]=tb_dict_val[key]/total_it_each_epoch_val
+    return eval_loss_cur_epoch,tb_dict_val
 
 #用于在验证集中评价mAP
 def eval_mAP():

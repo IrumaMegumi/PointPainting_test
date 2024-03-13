@@ -68,23 +68,23 @@ class Painter:
             # move the input and model to GPU for speed if available
             if torch.cuda.is_available():
                 input_batch = input_batch.to('cuda')
-
+            self.model.eval()
             with torch.no_grad():
                 output = self.model(input_batch)['out'][0]
-            output_permute = output.permute(1,2,0)
-            output_probability,output_predictions =  output_permute.max(2)
+                output_permute = output.permute(1,2,0)
+                output_probability,output_predictions =  output_permute.max(2)
 
-            other_object_mask = ~((output_predictions == 0) | (output_predictions == 2) | (output_predictions == 7) | (output_predictions == 15))
-            detect_object_mask = ~other_object_mask
-            sf = torch.nn.Softmax(dim=2)
+                other_object_mask = ~((output_predictions == 0) | (output_predictions == 2) | (output_predictions == 7) | (output_predictions == 15))
+                detect_object_mask = ~other_object_mask
+                sf = torch.nn.Softmax(dim=2)
 
-            # bicycle = 2 car = 7 person = 15 background = 0
-            output_reassign = torch.zeros(output_permute.size(0),output_permute.size(1),4)
-            output_reassign[:,:,0] = detect_object_mask * output_permute[:,:,0] + other_object_mask * output_probability # background
-            output_reassign[:,:,1] = output_permute[:,:,2] # bicycle
-            output_reassign[:,:,2] = output_permute[:,:,7] # car
-            output_reassign[:,:,3] = output_permute[:,:,15] #person
-            output_reassign_softmax = sf(output_reassign).cpu().numpy()
+                # bicycle = 2 car = 7 person = 15 background = 0
+                output_reassign = torch.zeros(output_permute.size(0),output_permute.size(1),4)
+                output_reassign[:,:,0] = detect_object_mask * output_permute[:,:,0] + other_object_mask * output_probability # background
+                output_reassign[:,:,1] = output_permute[:,:,2] # bicycle
+                output_reassign[:,:,2] = output_permute[:,:,7] # car
+                output_reassign[:,:,3] = output_permute[:,:,15] #person
+                output_reassign_softmax = sf(output_reassign).cpu().numpy()
 
         elif self.seg_net_index == 1:
             filename = self.root_split_path + left + ('%s.png' % idx)
@@ -232,27 +232,31 @@ class Painter:
 
         return augmented_lidar
 
-    def run(self):
-        num_image = 1
-        for idx in tqdm(range(num_image)):
-            sample_idx = "%06d" % idx
-            # points: N * 4(x, y, z, r)
-            points = self.get_lidar(sample_idx)
-            
-            # get segmentation score from network
-            scores_from_cam = self.get_score(sample_idx, "image_2/")
-            # no cam_r files
-            #scores_from_cam_r = self.get_score(sample_idx, "image_3/")
-            # scores_from_cam: H * W * 4/5, each pixel have 4/5 scores(0: background, 1: bicycle, 2: car, 3: person, 4: rider)
+    def run(self,id_file_path):
+        with open(id_file_path,'r') as file:
+            lines=file.readlines()
+            for idx in tqdm(lines,desc='Painting'):
+                idx = int(idx.strip())
+                sample_idx = "%06d" % idx
+                # points: N * 4(x, y, z, r)
+                points = self.get_lidar(sample_idx)
+                
+                # get segmentation score from network
+                scores_from_cam = self.get_score(sample_idx, "image_2/")
+                # no cam_r files
+                #scores_from_cam_r = self.get_score(sample_idx, "image_3/")
+                # scores_from_cam: H * W * 4/5, each pixel have 4/5 scores(0: background, 1: bicycle, 2: car, 3: person, 4: rider)
 
-            # get calibration data
-            calib_fromfile = self.get_calib_fromfile(sample_idx)
-            
-            # paint the point clouds
-            # points: N * 8
-            points = self.augment_lidar_class_scores_both(points, calib_fromfile,scores_from_cam)
-            np.save(self.save_path + ("%06d.npy" % idx), points)
+                # get calibration data
+                calib_fromfile = self.get_calib_fromfile(sample_idx)
+                
+                # paint the point clouds
+                # points: N * 8
+                points = self.augment_lidar_class_scores_both(points, calib_fromfile,scores_from_cam)
+                np.save(self.save_path + ("%06d.npy" % idx), points)
 
 if __name__ == '__main__':
     painter = Painter(SEG_NET)
-    painter.run()
+    # 把你要paint的标签放到这里
+    id_config_path="./id_config/id.txt"
+    painter.run(id_config_path)

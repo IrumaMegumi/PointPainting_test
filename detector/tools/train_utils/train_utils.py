@@ -6,13 +6,16 @@ import tqdm
 from torch.nn.utils import clip_grad_norm_
 # eval_loss用于评价验证集损失函数
 # eval_mAP用于评价验证集mAP
-from eval_utils.eval_utils import eval_loss
+from eval_utils.eval_utils import eval_mAP
 
 def train_one_epoch(model, optimizer, train_loader,test_loader, model_func, lr_scheduler, accumulated_iter, optim_cfg,
-                    rank, tbar, total_it_each_epoch, dataloader_iter, tb_log=None, leave_pbar=False):
+                    rank, tbar, total_it_each_epoch,total_it_each_epoch_val, cur_epoch,dataloader_iter, tb_log=None, leave_pbar=False):
     if total_it_each_epoch == len(train_loader):
         dataloader_iter = iter(train_loader)
-
+    
+    #记录每一个epoch的损失
+    epoch_loss=0
+    tb_dict_epoch={'rpn_loss':0,'rpn_loss_cls':0,'rpn_loss_loc':0,'rpn_loss_dir':0}
     if rank == 0:
         pbar = tqdm.tqdm(total=total_it_each_epoch, leave=leave_pbar, desc='train', dynamic_ncols=True)
 
@@ -38,14 +41,12 @@ def train_one_epoch(model, optimizer, train_loader,test_loader, model_func, lr_s
         optimizer.zero_grad()
 
         train_loss, tb_dict, disp_dict = model_func(model, batch)
-
         train_loss.backward()
         clip_grad_norm_(model.parameters(), optim_cfg.GRAD_NORM_CLIP)
         optimizer.step()
-
         accumulated_iter += 1
         disp_dict.update({'train_loss': train_loss.item(), 'lr': cur_lr})
-
+        epoch_loss+=train_loss
         # log to console and tensorboard
         if rank == 0:
             pbar.update()
@@ -54,14 +55,23 @@ def train_one_epoch(model, optimizer, train_loader,test_loader, model_func, lr_s
             tbar.refresh()
 
             if tb_log is not None:
-                tb_log.add_scalar('train/loss', train_loss, accumulated_iter)
+                #tb_log.add_scalar('train/loss', train_loss, accumulated_iter)
                 tb_log.add_scalar('meta_data/learning_rate', cur_lr, accumulated_iter)
                 for key, val in tb_dict.items():
-                    tb_log.add_scalar('train/' + key, val, accumulated_iter)
+                    if key in tb_dict_epoch.keys():
+                        #tb_log.add_scalar('train/' + key, val, accumulated_iter)
+                        tb_dict_epoch[key]+=val
     if rank == 0:
         pbar.close()
-    #val_loss=eval_loss(model,test_loader,model_func=model_func,accumulated_iter=accumulated_iter,rank=rank,tbar=tbar)
-    return accumulated_iter,train_loss
+    train_epoch_loss=epoch_loss/total_it_each_epoch
+    for key,val in tb_dict_epoch.items():
+        tb_dict_epoch[key]=tb_dict_epoch[key]/total_it_each_epoch
+    '''
+    val_loss=eval_loss(model,test_loader,model_func=model_func,
+                       total_it_each_epoch_val=total_it_each_epoch_val,accumulated_iter=accumulated_iter,
+                       rank=rank,cur_epoch=cur_epoch,tb_log=tb_log)
+    '''
+    return accumulated_iter,train_epoch_loss,tb_dict_epoch
 
 
 def train_model(model, optimizer, train_loader, test_loader,model_func, lr_scheduler, optim_cfg,
@@ -72,10 +82,12 @@ def train_model(model, optimizer, train_loader, test_loader,model_func, lr_sched
     loss=float('inf')
     with tqdm.trange(start_epoch, total_epochs, desc='epochs', dynamic_ncols=True, leave=(rank == 0)) as tbar:
         total_it_each_epoch = len(train_loader)
+        total_it_each_epoch_val=len(test_loader)
         if merge_all_iters_to_one_epoch:
             assert hasattr(train_loader.dataset, 'merge_all_iters_to_one_epoch')
             train_loader.dataset.merge_all_iters_to_one_epoch(merge=True, epochs=total_epochs)
             total_it_each_epoch = len(train_loader) // max(total_epochs, 1)
+            total_it_each_epoch_val=len(test_loader)// max(total_epochs,1)
 
         dataloader_iter = iter(train_loader)
         for cur_epoch in tbar:
@@ -87,17 +99,23 @@ def train_model(model, optimizer, train_loader, test_loader,model_func, lr_sched
                 cur_scheduler = lr_warmup_scheduler
             else:
                 cur_scheduler = lr_scheduler
-            accumulated_iter,train_loss_of_cur_epoch= train_one_epoch(
+            accumulated_iter,train_loss_of_cur_epoch,tb_dict_train= train_one_epoch(
                 model, optimizer, train_loader,test_loader, model_func,
                 lr_scheduler=cur_scheduler,
                 accumulated_iter=accumulated_iter, optim_cfg=optim_cfg,
                 rank=rank, tbar=tbar, tb_log=tb_log,
                 leave_pbar=(cur_epoch + 1 == total_epochs),
                 total_it_each_epoch=total_it_each_epoch,
+                total_it_each_epoch_val=total_it_each_epoch_val,
+                cur_epoch=cur_epoch,
                 dataloader_iter=dataloader_iter
             )
+            if tb_log is not None:
+                tb_log.add_scalar('train/epoch_train_loss',train_loss_of_cur_epoch,cur_epoch)
+                for key,val in tb_dict_train.items():
+                    tb_log.add_scalar('train/'+key,val,cur_epoch)
 
-            # save model with choose best，选取最好的模型保存
+            # save model with choose best，选取最好的模型保存，根据训练集上损失函数最小的保存
             if choose_best:
                 trained_epoch = cur_epoch + 1
                 best_ckpt_path=str(ckpt_save_dir / 'best')
@@ -133,7 +151,7 @@ def train_model(model, optimizer, train_loader, test_loader,model_func, lr_sched
                     save_checkpoint(
                         checkpoint_state(model, optimizer, trained_epoch, accumulated_iter), filename=ckpt_name,
                     )
-            # TODO:write early stopping here
+            # TODO:write early stopping here，not suggested
             if use_early_stopping:
                 print("use early stopping")
             else:

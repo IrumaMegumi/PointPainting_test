@@ -49,6 +49,7 @@ class VoxelGeneratorWrapper():
                 voxels, coordinates, num_points = voxel_output
         else:
             assert tv is not None, f"Unexpected error, library: 'cumm' wasn't imported properly."
+            points_input=tv.from_numpy(points)
             voxel_output = self._voxel_generator.point_to_voxel(tv.from_numpy(points))
             tv_voxels, tv_coordinates, tv_num_points = voxel_output
             # make copy with numpy(), since numpy_view() will disappear as soon as the generator is deleted
@@ -97,7 +98,8 @@ class DataProcessor(object):
             voxel_generator = VoxelGeneratorWrapper(
                 vsize_xyz=config.VOXEL_SIZE,
                 coors_range_xyz=self.point_cloud_range,
-                num_point_features=8,
+                #这里要注意改动
+                num_point_features=4,
                 max_num_points_per_voxel=config.MAX_POINTS_PER_VOXEL,
                 max_num_voxels=config.MAX_NUMBER_OF_VOXELS[self.mode]
             )
